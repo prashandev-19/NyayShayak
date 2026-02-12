@@ -50,8 +50,6 @@ async def translate_to_english(hindi_text: str) -> str:
         src_lang = "hin_Deva"
         tgt_lang = "eng_Latn"
         
-        # The custom tokenizer expects: "SourceTag TargetTag InputText"
-        # We manually construct this string.
         labeled_text = f"{src_lang} {tgt_lang} {hindi_text}"
 
         # 3. Tokenize the LABELED text
