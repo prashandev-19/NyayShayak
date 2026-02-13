@@ -1,15 +1,16 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from app.services import ocr_service, translation_service, rag_service, legal_engine
+from app.models.schemas import CaseAnalysisResponse 
 import uuid
 import logging
 
-# Setup Logger to track failures
+# Setup Logger
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-@router.post("/analyze-case-rag")
+@router.post("/analyze-case-rag", response_model=CaseAnalysisResponse)
 async def analyze_case_file_rag(file: UploadFile = File(...)):
     try:
         # 0. Basic Validation
@@ -26,18 +27,29 @@ async def analyze_case_file_rag(file: UploadFile = File(...)):
         # 2. Translation (Hindi -> English)
         english_text = await translation_service.translate_to_english(hindi_text)
         
-        
+        # 3. Store in RAG (Generate Case ID)
         case_id = str(uuid.uuid4())
         await rag_service.store_case_data(english_text, case_id)
         
-        analysis_result = await legal_engine.analyze_legal_case(case_id)
+        ai_result = await legal_engine.analyze_legal_case(case_id)
         
-        return {
-            "status": "success",
-            "case_id": case_id,
-            "original_snippet": hindi_text[:200], 
-            "rag_analysis": analysis_result["analysis"] 
-        }
+        if "error" in ai_result:
+            logger.error(f"AI Error: {ai_result}")
+            return CaseAnalysisResponse(
+                case_id=case_id,
+                summary="Error in AI Analysis",
+                offenses=[],
+                missing_evidence=[],
+                recommendation=f"System Error: {ai_result.get('error')}"
+            )
+
+        return CaseAnalysisResponse(
+            case_id=case_id,
+            summary=ai_result.get("summary", "No summary provided."),
+            offenses=ai_result.get("offenses", []),
+            missing_evidence=ai_result.get("missing_evidence", []),
+            recommendation=ai_result.get("recommendation", "No recommendation provided.")
+        )
 
     except HTTPException as he:
         raise he
@@ -45,5 +57,5 @@ async def analyze_case_file_rag(file: UploadFile = File(...)):
         logger.error(f"Error analyzing case: {str(e)}")
         return JSONResponse(
             status_code=500, 
-            content={"status": "error", "message": str(e)}
+            content={"detail": f"Internal Server Error: {str(e)}"}
         )

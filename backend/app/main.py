@@ -9,7 +9,6 @@ async def lifespan(app: FastAPI):
     print("System Startup: Pre-loading AI Models...")
     load_reasoning_model() 
     yield
-    # Clean up on shutdown (optional)
     print("System Shutdown")
 
 app = FastAPI(title="Virtual Senior Prosecutor API", lifespan=lifespan)

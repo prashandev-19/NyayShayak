@@ -25,7 +25,7 @@ def load_reasoning_model():
         print(f"Loading Base Model: {BASE_MODEL_ID}...")
         
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"   Detected Hardware: {device.upper()}")
+        print(f"Detected Hardware: {device.upper()}")
 
         try:
            
@@ -74,7 +74,7 @@ def load_reasoning_model():
             print("FactLegalLlama Adapter Loaded Successfully!")
             
         except Exception as e:
-            print(f"❌ Error loading model: {e}")
+            print(f"Error loading model: {e}")
             raise e
             
     return tokenizer, model
