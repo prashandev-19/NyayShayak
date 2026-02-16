@@ -1,5 +1,4 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
 from app.services import ocr_service, translation_service, rag_service, legal_engine
 from app.models.schemas import CaseAnalysisResponse 
 import uuid
@@ -55,7 +54,7 @@ async def analyze_case_file_rag(file: UploadFile = File(...)):
         raise he
     except Exception as e:
         logger.error(f"Error analyzing case: {str(e)}")
-        return JSONResponse(
+        raise HTTPException(
             status_code=500, 
-            content={"detail": f"Internal Server Error: {str(e)}"}
+            detail=f"Internal Server Error: {str(e)}"
         )

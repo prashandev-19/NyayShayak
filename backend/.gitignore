@@ -11,8 +11,16 @@ ENV/
 # Environment variables
 .env
 
-# EasyOCR models
+# Vector Database
+chroma_db/
+
+# Model files
 easyocr_models/
+*.pth
+*.bin
+*.safetensors
+checkpoint-*/
+local_legal_adapter/
 
 # IDE
 .vscode/

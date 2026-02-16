@@ -13,7 +13,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Virtual Senior Prosecutor API", lifespan=lifespan)
 
-
 app.include_router(analysis.router, prefix="/api/v1")
 
 @app.get("/")

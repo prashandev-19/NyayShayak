@@ -4,6 +4,10 @@ from pdf2image import convert_from_bytes
 from PIL import Image
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+POPPLER_PATH = os.getenv("POPPLER_PATH", None)
 
 model_dir = Path(__file__).parent.parent.parent / 'easyocr_models'
 model_dir.mkdir(parents=True, exist_ok=True)
@@ -23,7 +27,7 @@ async def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
     if filename.lower().endswith('.pdf'):
         # Convert PDF bytes to a list of images (one per page)
         try:
-            images = convert_from_bytes(file_bytes)
+            images = convert_from_bytes(file_bytes, poppler_path=POPPLER_PATH)
             
             for i, image in enumerate(images):
                 # Convert PIL Image to numpy array (EasyOCR expects numpy)

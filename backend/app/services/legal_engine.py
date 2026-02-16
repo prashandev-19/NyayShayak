@@ -11,7 +11,7 @@ load_dotenv()
 
 
 BASE_MODEL_ID = "meta-llama/Meta-Llama-3-8B" 
-ADAPTER_ID = r"D:\local_legal_adapter\Prediction_Explanation SFT\SFT_Over_NyayaFacts_Multi\checkpoint-2832" 
+ADAPTER_ID = os.getenv("ADAPTER_PATH")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 tokenizer = None
