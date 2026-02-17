@@ -24,8 +24,17 @@ def load_reasoning_model():
     if tokenizer is None or model is None:
         print(f"Loading Base Model: {BASE_MODEL_ID}...")
         
+        # Enhanced GPU detection
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Detected Hardware: {device.upper()}")
+        
+        if device == "cuda":
+            print(f"✓ GPU Found: {torch.cuda.get_device_name(0)}")
+            print(f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+            print(f"  PyTorch: {torch.__version__}")
+        else:
+            print(f"⚠ PyTorch Version: {torch.__version__}")
+            print(f"  CUDA Built: {torch.version.cuda if torch.version.cuda else 'No'}")
 
         try:
            
@@ -37,24 +46,27 @@ def load_reasoning_model():
                 tokenizer.pad_token = tokenizer.eos_token
 
             if device == "cuda":
-                print("Activating 4-bit Quantization (bitsandbytes)...")
+                print("✓ Activating 4-bit Quantization (bitsandbytes) for GPU...")
                 from transformers import BitsAndBytesConfig
                 
                 bnb_config = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_quant_type="nf4",
                     bnb_4bit_compute_dtype=torch.float16,
+                    llm_int8_enable_fp32_cpu_offload=True  # Allow CPU offload if needed
                 )
                 
                 base_model = AutoModelForCausalLM.from_pretrained(
                     BASE_MODEL_ID,
                     token=HF_TOKEN,
                     quantization_config=bnb_config,
-                    device_map="auto"
+                    device_map="auto",  # Automatically distribute across GPU and CPU
+                    max_memory={0: "5GB", "cpu": "30GB"}  # Reserve some VRAM for other processes
                 )
+                print("✓ Model loaded on GPU with 4-bit quantization")
             else:
-                print(" No GPU detected. Loading in Standard CPU Mode.")
-                print(" Note: This will be slow and consume significant RAM.")
+                print("⚠ No GPU detected. Loading in Standard CPU Mode.")
+                print("  Note: This will be slow and consume significant RAM.")
                 
                 base_model = AutoModelForCausalLM.from_pretrained(
                     BASE_MODEL_ID,
