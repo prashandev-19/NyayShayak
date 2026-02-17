@@ -5,6 +5,7 @@ from PIL import Image
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import torch
 
 load_dotenv()
 POPPLER_PATH = os.getenv("POPPLER_PATH", None)
@@ -14,7 +15,7 @@ model_dir.mkdir(parents=True, exist_ok=True)
 
 reader = easyocr.Reader(
     ['hi', 'en'], 
-    gpu=False, 
+    gpu=torch.cuda.is_available(), 
     model_storage_directory=str(model_dir),
     user_network_directory=str(model_dir)
 ) 

@@ -49,6 +49,11 @@ def load_reasoning_model():
                 print("✓ Activating 4-bit Quantization (bitsandbytes) for GPU...")
                 from transformers import BitsAndBytesConfig
                 
+                # Calculate optimal GPU memory allocation
+                gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                max_gpu = f"{int(gpu_memory * 0.85)}GB" if gpu_memory >= 8 else "5GB"
+                print(f"  Allocating up to {max_gpu} for model")
+                
                 bnb_config = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_quant_type="nf4",
@@ -61,7 +66,7 @@ def load_reasoning_model():
                     token=HF_TOKEN,
                     quantization_config=bnb_config,
                     device_map="auto",  # Automatically distribute across GPU and CPU
-                    max_memory={0: "5GB", "cpu": "30GB"}  # Reserve some VRAM for other processes
+                    max_memory={0: max_gpu, "cpu": "30GB"}
                 )
                 print("✓ Model loaded on GPU with 4-bit quantization")
             else:
