@@ -4,23 +4,39 @@ __pycache__/
 *$py.class
 *.so
 .Python
+*.pyc
 venv/
 env/
 ENV/
+.venv
 
 # Environment variables
 .env
+.env.local
+*.env
 
 # Vector Database
 chroma_db/
+*.db
+*.sqlite
 
-# Model files
+# Model files (large files)
 easyocr_models/
 *.pth
 *.bin
 *.safetensors
+*.onnx
+*.h5
 checkpoint-*/
 local_legal_adapter/
+
+# Auto-generated debug output (case context dumps, model responses)
+debug_analysis/
+debug_translations/
+
+# Logs
+*.log
+logs/
 
 # IDE
 .vscode/
@@ -31,3 +47,14 @@ local_legal_adapter/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak

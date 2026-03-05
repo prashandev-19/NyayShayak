@@ -1,0 +1,87 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyc
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv
+
+# Environment Variables & Secrets
+.env
+.env.local
+*.env
+frontend/.streamlit/secrets.toml
+
+# Model Files & Data (large files)
+*.pth
+*.bin
+*.safetensors
+*.onnx
+*.h5
+*.pkl
+*.joblib
+easyocr_models/
+checkpoint-*/
+local_legal_adapter/
+
+# Data folder - allow small reference PDFs, ignore other large files
+Data/*
+!Data/README.md
+!Data/*.pdf
+
+# Vector Database
+chroma_db/
+*.db
+*.sqlite
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Build & Distribution
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Windows
+$RECYCLE.BIN/
+*.lnk
