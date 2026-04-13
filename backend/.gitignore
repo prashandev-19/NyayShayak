@@ -58,3 +58,6 @@ htmlcov/
 *.tmp
 *.temp
 *.bak
+test_hallucination_check.py
+test_framework.py
+validation_engine.py

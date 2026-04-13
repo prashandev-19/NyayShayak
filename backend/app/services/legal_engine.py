@@ -20,6 +20,13 @@ BASE_MODEL_ID = "meta-llama/Meta-Llama-3-8B"
 ADAPTER_ID = os.getenv("ADAPTER_PATH")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
+# Full-document coverage controls for long FIRs.
+ENABLE_CONTEXT_AGGREGATION = os.getenv("LEGAL_ENABLE_CONTEXT_AGGREGATION", "true").lower() == "true"
+LEGAL_CHUNK_SIZE_CHARS = int(os.getenv("LEGAL_CHUNK_SIZE_CHARS", "1800"))
+LEGAL_CHUNK_OVERLAP_CHARS = int(os.getenv("LEGAL_CHUNK_OVERLAP_CHARS", "200"))
+LEGAL_CONTEXT_CHAR_BUDGET = int(os.getenv("LEGAL_CONTEXT_CHAR_BUDGET", "7000"))
+LEGAL_USE_PROMPT_EXAMPLES = os.getenv("LEGAL_USE_PROMPT_EXAMPLES", "false").lower() == "true"
+
 tokenizer = None
 model = None
 
@@ -415,6 +422,109 @@ def clean_ocr_text(text: str) -> str:
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
+
+def _split_text_with_overlap(text: str, chunk_size: int, overlap: int):
+    """Split long text into overlapping windows and return (start, end, chunk) tuples."""
+    if not text:
+        return []
+
+    chunk_size = max(300, chunk_size)
+    overlap = max(0, min(overlap, chunk_size - 1))
+    step = max(1, chunk_size - overlap)
+
+    chunks = []
+    start = 0
+    n = len(text)
+    while start < n:
+        end = min(start + chunk_size, n)
+        chunks.append((start, end, text[start:end]))
+        if end >= n:
+            break
+        start += step
+    return chunks
+
+
+def _extract_chunk_signals(chunk_text: str):
+    """Extract high-signal lines from a chunk for legal analysis aggregation."""
+    section_hits = []
+    section_patterns = [
+        r'(?:Section|Sec\.?|धारा)\s+[\d]{1,4}(?:\([a-zA-Z0-9]+\))?\s*(?:IPC|BNS|BNSS)?',
+        r'(?:under|u/s|U/S)\s+(?:Section|Sec\.?)?\s*[\d]{1,4}(?:\([a-zA-Z0-9]+\))?\s*(?:IPC|BNS|BNSS)',
+    ]
+    for pat in section_patterns:
+        section_hits.extend(re.findall(pat, chunk_text, flags=re.IGNORECASE))
+
+    lines = [l.strip() for l in chunk_text.splitlines() if l.strip()]
+    keywords = re.compile(
+        r'FIR|complainant|informant|accused|victim|incident|offence|offense|police station|'
+        r'witness|medical|mlc|injury|weapon|seizure|recovery|cctv|forensic|date|place|'
+        r'robbery|theft|assault|murder|rape|cheating|threat',
+        re.IGNORECASE,
+    )
+    signal_lines = [ln for ln in lines if keywords.search(ln)]
+
+    # Keep chunk signals compact and deterministic.
+    signal_lines = signal_lines[:10]
+    section_hits = list(dict.fromkeys([s.strip() for s in section_hits if s.strip()]))[:8]
+    return signal_lines, section_hits
+
+
+def _build_aggregated_context(full_text: str, chunk_size: int, overlap: int, context_budget: int):
+    """
+    Build compact context derived from all chunks to increase document coverage.
+    Returns: (aggregated_context, stats)
+    """
+    windows = _split_text_with_overlap(full_text, chunk_size, overlap)
+    if not windows:
+        return "", {
+            "windows": 0,
+            "coverage_percent": 0.0,
+            "unique_chars": 0,
+            "total_chars": 0,
+            "context_chars": 0,
+        }
+
+    seen_positions = set()
+    kept_lines = []
+    kept_sections = []
+
+    for idx, (start, end, chunk) in enumerate(windows):
+        for pos in range(start, end):
+            seen_positions.add(pos)
+
+        lines, sections = _extract_chunk_signals(chunk)
+        if lines:
+            kept_lines.append(f"[Chunk {idx + 1}] " + " | ".join(lines[:4]))
+        kept_sections.extend(sections)
+
+    unique_sections = list(dict.fromkeys(kept_sections))
+    dedup_lines = list(dict.fromkeys(kept_lines))
+
+    pieces = []
+    if unique_sections:
+        pieces.append("Detected section mentions: " + ", ".join(unique_sections[:80]))
+    pieces.extend(dedup_lines)
+
+    aggregated = "\n".join(pieces).strip()
+    if len(aggregated) < 1000:
+        # Ensure a small raw tail from document is still present for narrative continuity.
+        aggregated = (aggregated + "\n\n" + full_text[: max(0, context_budget // 2)]).strip()
+
+    aggregated = aggregated[:context_budget]
+
+    total_chars = len(full_text)
+    unique_chars = len(seen_positions)
+    coverage_percent = (unique_chars / total_chars * 100.0) if total_chars else 0.0
+
+    stats = {
+        "windows": len(windows),
+        "coverage_percent": coverage_percent,
+        "unique_chars": unique_chars,
+        "total_chars": total_chars,
+        "context_chars": len(aggregated),
+    }
+    return aggregated, stats
+
 async def analyze_legal_case(case_id: str, raw_english_text: str = None, hint_sections: list = None, raw_hindi_text: str = None):
    
     print(f"\n{'='*60}")
@@ -492,10 +602,35 @@ async def analyze_legal_case(case_id: str, raw_english_text: str = None, hint_se
     print(f"Case context ready ({time.time() - rag_start:.2f}s)\n")
    
     full_context_cleaned = clean_ocr_text(full_context)
-    
-    formatted_context = full_context_cleaned[:7000]
-    if len(full_context_cleaned) > 7000:
-        print(f"Context truncated from {len(full_context_cleaned)} to 7000 chars to fit GPU memory")
+
+    coverage_stats = {
+        "windows": 1,
+        "coverage_percent": 100.0,
+        "unique_chars": len(full_context_cleaned),
+        "total_chars": len(full_context_cleaned),
+        "context_chars": min(len(full_context_cleaned), LEGAL_CONTEXT_CHAR_BUDGET),
+    }
+
+    if ENABLE_CONTEXT_AGGREGATION and len(full_context_cleaned) > LEGAL_CONTEXT_CHAR_BUDGET:
+        formatted_context, coverage_stats = _build_aggregated_context(
+            full_context_cleaned,
+            chunk_size=LEGAL_CHUNK_SIZE_CHARS,
+            overlap=LEGAL_CHUNK_OVERLAP_CHARS,
+            context_budget=LEGAL_CONTEXT_CHAR_BUDGET,
+        )
+        print(
+            f"Context aggregation enabled: scanned {coverage_stats['windows']} windows, "
+            f"coverage {coverage_stats['coverage_percent']:.2f}% "
+            f"({coverage_stats['unique_chars']}/{coverage_stats['total_chars']} chars), "
+            f"aggregated to {len(formatted_context)} chars"
+        )
+    else:
+        formatted_context = full_context_cleaned[:LEGAL_CONTEXT_CHAR_BUDGET]
+        if len(full_context_cleaned) > LEGAL_CONTEXT_CHAR_BUDGET:
+            print(
+                f"Context truncated from {len(full_context_cleaned)} to "
+                f"{LEGAL_CONTEXT_CHAR_BUDGET} chars"
+            )
     
     print("[2.1/4] Pre-extracting IPC/BNS sections from case document...")
 
@@ -523,7 +658,7 @@ async def analyze_legal_case(case_id: str, raw_english_text: str = None, hint_se
     
     eng_extracted_sections = set()
     for pattern in section_patterns:
-        matches = re.findall(pattern, formatted_context, re.IGNORECASE)
+        matches = re.findall(pattern, full_context_cleaned, re.IGNORECASE)
         for match in matches:
             section_parts = re.split(r'[,\s]+(?:and\s+)?', match)
             for part in section_parts:
@@ -556,6 +691,8 @@ async def analyze_legal_case(case_id: str, raw_english_text: str = None, hint_se
     print(f"\nCase Context summary:")
     print(f"  - Number of chunks: {len(context_chunks)}")
     print(f"  - Total context length: {len(formatted_context)} characters")
+    print(f"  - Source scanned length: {coverage_stats['total_chars']} characters")
+    print(f"  - Document scan coverage: {coverage_stats['coverage_percent']:.2f}%")
     print(f"  - Pre-extracted sections: {', '.join(pre_extracted_list[:10])}{'...' if len(pre_extracted_list) > 10 else ''}")
     print(f"  - First 300 chars of context:")
     print(f"    {formatted_context[:300]}...")
@@ -572,6 +709,12 @@ async def analyze_legal_case(case_id: str, raw_english_text: str = None, hint_se
         f.write("-"*80 + "\n")
         f.write(formatted_context)
         f.write("\n\n" + "="*80 + "\n")
+        f.write(
+            f"SOURCE_CHARS={coverage_stats['total_chars']} | "
+            f"SCANNED_CHARS={coverage_stats['unique_chars']} | "
+            f"SCAN_COVERAGE_PERCENT={coverage_stats['coverage_percent']:.2f} | "
+            f"AGG_CONTEXT_CHARS={coverage_stats['context_chars']}\n"
+        )
         f.write(f"PRE-EXTRACTED SECTIONS: {pre_extracted_list}\n")
         f.write("="*80 + "\n")
     print(f"Saved context debug file: {debug_file}")
@@ -636,6 +779,14 @@ async def analyze_legal_case(case_id: str, raw_english_text: str = None, hint_se
     _acc_hint  = _hindi_acc if _hindi_acc else _eng_acc
     print(f"Final merged names → complainant: '{_comp_hint}' | accused: '{_acc_hint}'")
     _case_meta = extract_case_metadata(formatted_context)
+
+    STRICT_GROUNDING_RULES = (
+        "GROUNDING RULES: Use only facts, names, dates, places, sections, and evidence explicitly present in the source context. "
+        "Do not invent standard investigation steps, procedural sections, witness actions, or forensic items unless they are clearly mentioned in the source. "
+        "If a fact is not supported by the source, write 'not mentioned in source'. "
+        "Prefer exact section numbers and do not add Section 34/common intention unless the text explicitly supports it. "
+        "Keep the response factual, concise, and grounded."
+    )
 
    
     EXAMPLE_BLOCK = (
@@ -707,6 +858,9 @@ async def analyze_legal_case(case_id: str, raw_english_text: str = None, hint_se
         "three accused should be arrested and questioned separately to identify individual "
         "roles and establish common intention.\n\n"
     )
+
+    if not LEGAL_USE_PROMPT_EXAMPLES:
+        EXAMPLE_BLOCK = ""
 
     # -------------------------------------------------------------------
     # Build a richer Facts paragraph matching training data style:
@@ -799,6 +953,7 @@ async def analyze_legal_case(case_id: str, raw_english_text: str = None, hint_se
     case_name_line = "[COMPLAINANT_NAME] Vs. [ACCUSED_NAME]"
 
     raw_prompt = (
+        f"{STRICT_GROUNDING_RULES}\n\n"
         f"{EXAMPLE_BLOCK}"
         f"Case Name: {case_name_line}\n\n"
         f"Text: FIR analysis. Sections invoked: {sections_str}. "
@@ -806,7 +961,7 @@ async def analyze_legal_case(case_id: str, raw_english_text: str = None, hint_se
         f"Facts: {masked_facts}\n\n"
         f"Issue: Whether [ACCUSED_NAME] is criminally liable under IPC/BNS Sections "
         f"{sections_str} as alleged in the FIR filed by [COMPLAINANT_NAME], and what "
-        f"evidence is required to establish guilt beyond reasonable doubt.\n\n"
+        f"evidence is required to establish guilt beyond reasonable doubt. Use only source-backed evidence; if uncertain, say not mentioned in source.\n\n"
         f"Arguments of Petitioner: {masked_petitioner_args}\n\n"
         f"Arguments of Respondent: The accused's exact role and motive are yet to be "
         f"fully established during investigation. The accused denies the allegations "
@@ -1053,75 +1208,58 @@ async def analyze_legal_case(case_id: str, raw_english_text: str = None, hint_se
         return found
 
     def extract_missing_evidence_from_reasoning(reasoning: str, context: str) -> list:
-        # First detect what the FIR already has
         available = _detect_available_evidence(context)
         print(f"Evidence already in document: {available}")
 
-        # AI-generated evidence items from reasoning
+        def _tokenize_for_overlap(text: str) -> set:
+            stop = {
+                "the", "and", "with", "from", "that", "this", "were", "was", "have", "has",
+                "for", "into", "under", "case", "fir", "section", "sections", "shall", "should",
+                "must", "need", "required", "evidence", "source", "document", "investigation"
+            }
+            tokens = set(re.findall(r"[a-z0-9]+", text.lower()))
+            return {t for t in tokens if len(t) > 3 and t not in stop}
+
+        def _is_supported_by_source(item: str) -> bool:
+            item_l = item.lower()
+            checks = [
+                (("mlc" in item_l or "medical" in item_l or "medico" in item_l), "mlc" in available),
+                (("site plan" in item_l or "scene" in item_l or "spot map" in item_l), "site_plan" in available),
+                (("witness" in item_l or "161" in item_l), "witness_statements" in available),
+                (("cctv" in item_l or "footage" in item_l or "camera" in item_l), "cctv" in available),
+                (("fsl" in item_l or "forensic" in item_l or "fingerprint" in item_l), "fsl" in available),
+                (("cdr" in item_l or "call detail" in item_l), "cdr" in available),
+                (("seizure" in item_l or "recovery" in item_l or "panchnama" in item_l), "seizure" in available),
+                (("arrest" in item_l), "arrest" in available),
+            ]
+            for applies, supported in checks:
+                if applies:
+                    return supported
+
+            if "post-mortem" in item_l or "postmortem" in item_l or "autopsy" in item_l:
+                return bool(re.search(r"post.?mortem|autopsy", context, re.IGNORECASE))
+
+            item_tokens = _tokenize_for_overlap(item)
+            if not item_tokens:
+                return False
+            ctx_tokens = _tokenize_for_overlap(context)
+            overlap = len(item_tokens & ctx_tokens)
+            return overlap >= 2
+
         evidence = []
         evidence_keywords = r'(?:must|should|required?|necessary|essential|obtain|collect|record|examine|recover|produce|establish|verify|need)'
         for sent in re.split(r'[.!?\n]', reasoning):
-            if re.search(evidence_keywords, sent, re.IGNORECASE):
-                sent = sent.strip()
-                if 20 < len(sent) < 200:
-                    evidence.append(sent)
-        evidence = list(dict.fromkeys(evidence))[:4]
+            sent = sent.strip()
+            if not (20 < len(sent) < 220):
+                continue
+            if not re.search(evidence_keywords, sent, re.IGNORECASE):
+                continue
+            if _is_supported_by_source(sent):
+                evidence.append(sent)
 
-        # Context-aware gaps: only add items NOT already present
-        ctx_lower = context.lower()
-        gaps = []
-
-        # Theft / robbery
-        if 'theft' in ctx_lower or 'stolen' in ctx_lower or 'robbery' in ctx_lower or 'loot' in ctx_lower:
-            if 'seizure' not in available:
-                gaps.append("Recovery and panchnama of stolen property")
-            gaps.append("Ownership proof of stolen items (receipts, invoices)")
-            if 'cctv' not in available:
-                gaps.append("CCTV footage from crime scene")
-
-        # Assault / hurt
-        if 'assault' in ctx_lower or 'hurt' in ctx_lower or 'injury' in ctx_lower or 'beat' in ctx_lower:
-            if 'mlc' not in available:
-                gaps.append("Medical Examination Report (MLC)")
-            else:
-                gaps.append("Final medical opinion on nature and type of weapon used")
-            if 'photos' not in available:
-                gaps.append("Photographs of injuries sustained by victim")
-
-        # Murder / death
-        if 'murder' in ctx_lower or 'death' in ctx_lower or 'killed' in ctx_lower:
-            gaps.append("Post-mortem report")
-            gaps.append("Weapon recovery and FSL analysis report")
-            if 'fsl' not in available:
-                gaps.append("Forensic examination of crime scene")
-
-        # Fraud / cheating
-        if 'fraud' in ctx_lower or 'cheating' in ctx_lower or 'forgery' in ctx_lower:
-            gaps.append("Documentary evidence of transaction")
-            gaps.append("Bank statements or payment records")
-            gaps.append("Forensic document examination")
-
-        # Threat / intimidation
-        if 'threat' in ctx_lower or 'intimidat' in ctx_lower or '506' in context:
-            if 'cdr' not in available:
-                gaps.append("Call Detail Records (CDR) to corroborate threats")
-            if 'witness_statements' not in available:
-                gaps.append("Witness statements corroborating threats")
-
-        # Universal gaps — only if not already present
-        if 'witness_statements' not in available:
-            gaps.append("Formal witness statements under Section 161 CrPC")
-        if 'site_plan' not in available:
-            gaps.append("Scene of crime inspection and site plan")
-        if 'fsl' not in available and ('weapon' in ctx_lower or 'rod' in ctx_lower or 'stick' in ctx_lower or 'knife' in ctx_lower):
-            gaps.append("FSL examination of weapon/instrument used")
-
-        # Merge AI evidence + gaps, dedup
-        for item in gaps:
-            if item not in evidence:
-                evidence.append(item)
-
-        return list(dict.fromkeys(evidence))[:8]
+        filtered = list(dict.fromkeys(evidence))[:8]
+        print(f"Source-supported missing-evidence items: {len(filtered)}")
+        return filtered
 
     def parse_judgment_output(response: str, context: str, sections: list,
                                complainant_name: str, accused_name: str,

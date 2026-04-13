@@ -7,4 +7,7 @@ class CaseAnalysisResponse(BaseModel):
     summary: str
     offenses: List[str]         
     missing_evidence: List[str] 
-    recommendation: str        
+    recommendation: str
+    summary_hindi: Optional[str] = None
+    offenses_hindi: Optional[List[str]] = None
+    missing_evidence_hindi: Optional[List[str]] = None

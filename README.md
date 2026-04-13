@@ -1,4 +1,4 @@
-# NyaySahayak ⚖️
+# NyayShayak ⚖️
 
 **Virtual Senior Prosecutor** - AI-Powered Legal Case Analysis System
 

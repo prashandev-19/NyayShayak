@@ -65,6 +65,10 @@ htmlcov/
 .tox/
 .hypothesis/
 
+# Local debug/test artifacts
+/test_hallucination_check.py
+/debug_analysis/
+
 # Build & Distribution
 build/
 dist/

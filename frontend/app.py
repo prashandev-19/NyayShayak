@@ -216,15 +216,27 @@ def display_results(result):
     # Summary
     st.markdown("---")
     st.subheader("📝 Case Summary")
-    st.markdown(f'<div class="result-box">{result.get("summary", "No summary available")}</div>', unsafe_allow_html=True)
+    summary_en = result.get("summary", "No summary available")
+    summary_hi = result.get("summary_hindi")
+    tab_summary_en, tab_summary_hi = st.tabs(["English", "हिंदी"])
+    with tab_summary_en:
+        st.markdown(f'<div class="result-box">{summary_en}</div>', unsafe_allow_html=True)
+    with tab_summary_hi:
+        st.markdown(f'<div class="result-box">{summary_hi or summary_en}</div>', unsafe_allow_html=True)
     
     # Offenses
     st.markdown("---")
     st.subheader("⚠️ Identified Offenses")
     offenses = result.get("offenses", [])
+    offenses_hi = result.get("offenses_hindi") or []
     if offenses:
-        for i, offense in enumerate(offenses, 1):
-            st.markdown(f"**{i}.** {offense}")
+        tab_off_en, tab_off_hi = st.tabs(["English", "हिंदी"])
+        with tab_off_en:
+            for i, offense in enumerate(offenses, 1):
+                st.markdown(f"**{i}.** {offense}")
+        with tab_off_hi:
+            for i, offense in enumerate(offenses_hi if offenses_hi else offenses, 1):
+                st.markdown(f"**{i}.** {offense}")
     else:
         st.info("No offenses identified in this case.")
     
@@ -232,11 +244,19 @@ def display_results(result):
     st.markdown("---")
     st.subheader("🔍 Missing Evidence / Gaps")
     missing_evidence = result.get("missing_evidence", [])
+    missing_evidence_hi = result.get("missing_evidence_hindi") or []
     if missing_evidence:
-        st.markdown('<div class="warning-box">', unsafe_allow_html=True)
-        for i, evidence in enumerate(missing_evidence, 1):
-            st.markdown(f"**{i}.** {evidence}")
-        st.markdown('</div>', unsafe_allow_html=True)
+        tab_gap_en, tab_gap_hi = st.tabs(["English", "हिंदी"])
+        with tab_gap_en:
+            st.markdown('<div class="warning-box">', unsafe_allow_html=True)
+            for i, evidence in enumerate(missing_evidence, 1):
+                st.markdown(f"**{i}.** {evidence}")
+            st.markdown('</div>', unsafe_allow_html=True)
+        with tab_gap_hi:
+            st.markdown('<div class="warning-box">', unsafe_allow_html=True)
+            for i, evidence in enumerate(missing_evidence_hi if missing_evidence_hi else missing_evidence, 1):
+                st.markdown(f"**{i}.** {evidence}")
+            st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.success("✅ No critical evidence gaps identified.")
     
@@ -284,12 +304,27 @@ SUMMARY
 {'-' * 60}
 {result.get('summary', 'No summary available')}
 
+SUMMARY (HINDI)
+{'-' * 60}
+{result.get('summary_hindi', result.get('summary', 'No summary available'))}
+
 IDENTIFIED OFFENSES
 {'-' * 60}
 """
     offenses = result.get('offenses', [])
+    offenses_hi = result.get('offenses_hindi', offenses)
     if offenses:
         for i, offense in enumerate(offenses, 1):
+            report += f"{i}. {offense}\n"
+    else:
+        report += "No offenses identified.\n"
+
+    report += f"""
+IDENTIFIED OFFENSES (HINDI)
+{'-' * 60}
+"""
+    if offenses_hi:
+        for i, offense in enumerate(offenses_hi, 1):
             report += f"{i}. {offense}\n"
     else:
         report += "No offenses identified.\n"
@@ -299,8 +334,19 @@ MISSING EVIDENCE / GAPS
 {'-' * 60}
 """
     missing_evidence = result.get('missing_evidence', [])
+    missing_evidence_hi = result.get('missing_evidence_hindi', missing_evidence)
     if missing_evidence:
         for i, evidence in enumerate(missing_evidence, 1):
+            report += f"{i}. {evidence}\n"
+    else:
+        report += "No critical evidence gaps identified.\n"
+
+    report += f"""
+MISSING EVIDENCE / GAPS (HINDI)
+{'-' * 60}
+"""
+    if missing_evidence_hi:
+        for i, evidence in enumerate(missing_evidence_hi, 1):
             report += f"{i}. {evidence}\n"
     else:
         report += "No critical evidence gaps identified.\n"

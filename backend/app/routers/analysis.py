@@ -99,15 +99,48 @@ async def analyze_case_file_rag(file: UploadFile = File(...)):
                 summary="Error in AI Analysis",
                 offenses=[],
                 missing_evidence=[],
-                recommendation=f"System Error: {ai_result.get('error')}"
+                recommendation=f"System Error: {ai_result.get('error')}",
+                summary_hindi=None,
+                offenses_hindi=None,
+                missing_evidence_hindi=None,
             )
+
+        summary_en = ai_result.get("summary", "No summary provided.")
+        offenses_en = ai_result.get("offenses", [])
+        missing_evidence_en = ai_result.get("missing_evidence", [])
+
+        # Best-effort Hindi rendering for frontend bilingual display.
+        summary_hi = None
+        offenses_hi = None
+        missing_evidence_hi = None
+        try:
+            summary_hi_raw = await translation_service.translate_to_hindi(summary_en)
+            if summary_hi_raw and not summary_hi_raw.startswith("Error"):
+                summary_hi = summary_hi_raw
+
+            if offenses_en:
+                offenses_hi = []
+                for offense in offenses_en:
+                    hi = await translation_service.translate_to_hindi(offense)
+                    offenses_hi.append(hi if hi and not hi.startswith("Error") else offense)
+
+            if missing_evidence_en:
+                missing_evidence_hi = []
+                for gap in missing_evidence_en:
+                    hi = await translation_service.translate_to_hindi(gap)
+                    missing_evidence_hi.append(hi if hi and not hi.startswith("Error") else gap)
+        except Exception as translation_err:
+            logger.warning(f"Hindi translation fallback used due to: {translation_err}")
 
         return CaseAnalysisResponse(
             case_id=case_id,
-            summary=ai_result.get("summary", "No summary provided."),
-            offenses=ai_result.get("offenses", []),
-            missing_evidence=ai_result.get("missing_evidence", []),
-            recommendation=ai_result.get("recommendation", "No recommendation provided.")
+            summary=summary_en,
+            offenses=offenses_en,
+            missing_evidence=missing_evidence_en,
+            recommendation=ai_result.get("recommendation", "No recommendation provided."),
+            summary_hindi=summary_hi,
+            offenses_hindi=offenses_hi,
+            missing_evidence_hindi=missing_evidence_hi,
         )
 
     except HTTPException as he:
